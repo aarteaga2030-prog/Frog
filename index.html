@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Frog Jedi: Swamp Saga</title>
+  <link rel="stylesheet" href="src/style.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./lib/three/three.module.js",
+        "three/addons/": "./lib/three/addons/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="hud" class="hidden">
+    <div class="bars">
+      <div class="bar"><span>HEALTH</span><div class="track"><div id="hp-fill" class="fill hp"></div></div></div>
+      <div class="bar"><span>FORCE</span><div class="track"><div id="force-fill" class="fill force"></div></div></div>
+    </div>
+    <div class="stats">
+      <div>WAVE <b id="wave">1</b></div>
+      <div>SCORE <b id="score">0</b></div>
+    </div>
+    <div id="boss" class="hidden">
+      <span>SITH TOAD</span>
+      <div class="track"><div id="boss-fill" class="fill boss"></div></div>
+    </div>
+    <div id="cooldowns">
+      <div class="cd" id="cd-slash"><kbd>J</kbd> Slash</div>
+      <div class="cd" id="cd-block"><kbd>K</kbd> Block</div>
+      <div class="cd" id="cd-push"><kbd>F</kbd> Force Push</div>
+      <div class="cd" id="cd-throw"><kbd>Q</kbd> Saber Throw</div>
+    </div>
+    <div id="crosshair"></div>
+    <div id="touch-hint">Drag to look around</div>
+  </div>
+
+  <div id="banner"></div>
+  <div id="popup"></div>
+  <div id="flash"></div>
+
+  <div id="loading" class="overlay">
+    <h1>FROG JEDI</h1>
+    <p id="load-text">Gathering the Force… <span id="load-pct">0%</span></p>
+  </div>
+
+  <div id="menu" class="overlay hidden">
+    <h1>FROG JEDI</h1>
+    <h2>Swamp Saga</h2>
+    <p class="tag">The droids have invaded the swamp. Only one amphibian can stop them.</p>
+    <div class="colors">
+      <span>Saber color:</span>
+      <button data-color="blue" class="swatch sel" style="--c:#3b8cff"></button>
+      <button data-color="green" class="swatch" style="--c:#3dff5a"></button>
+      <button data-color="purple" class="swatch" style="--c:#b04dff"></button>
+      <button data-color="yellow" class="swatch" style="--c:#ffd02e"></button>
+    </div>
+    <button id="start" class="big">IGNITE &amp; PLAY <small>Enter</small></button>
+    <div class="controls">
+      <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Hop around</div>
+      <div><span class="touch-ico" aria-hidden="true"></span> Drag screen to look (or <kbd>←</kbd><kbd>→</kbd>)</div>
+      <div><kbd>J</kbd> Saber slash (or left click)</div>
+      <div><kbd>K</kbd> / <kbd>Shift</kbd> Block &amp; deflect (or right click)</div>
+      <div><kbd>Space</kbd> Jump, again for Force Flip</div>
+      <div><kbd>F</kbd> Force Push &nbsp; <kbd>Q</kbd> Saber Throw</div>
+      <div><kbd>Enter</kbd> Start / resume &nbsp; <kbd>Esc</kbd> Pause</div>
+      <div><kbd>M</kbd> Mute</div>
+    </div>
+    <p class="tip">Tip: start blocking right before a bolt hits for a PERFECT deflect straight back at the shooter.</p>
+  </div>
+
+  <div id="pause" class="overlay hidden">
+    <h1>PAUSED</h1>
+    <button id="resume" class="big">RESUME</button>
+  </div>
+
+  <div id="gameover" class="overlay hidden">
+    <h1>YOU HAVE CROAKED</h1>
+    <p>Wave <b id="go-wave">1</b> &middot; Score <b id="go-score">0</b></p>
+    <p id="go-best"></p>
+    <button id="restart" class="big">TRY AGAIN</button>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
