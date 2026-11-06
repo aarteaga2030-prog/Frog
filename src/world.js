@@ -16,6 +16,9 @@ export const ARENA_RADIUS = 24;
 export function buildWorld(scene) {
   const rand = rng(1337);
   const obstacles = []; // { x, z, r } circles that block movement and bolts
+  const crowns = [];     // tree tops that sway
+  const mossList = [];   // hanging moss strands
+  const pads = [];       // floating lily pads
 
   scene.background = new THREE.Color(0x0a1719);
   scene.fog = new THREE.FogExp2(0x0d2124, 0.028);
@@ -118,7 +121,10 @@ export function buildWorld(scene) {
       g.add(root);
     }
 
-    // canopy blobs
+    // canopy blobs live in a crown group that sways in the wind
+    const crown = new THREE.Group();
+    g.add(crown);
+    crowns.push({ obj: crown, phase: rand() * 6.28, amp: 0.012 + rand() * 0.01 });
     const blobs = 4 + Math.floor(rand() * 3);
     for (let i = 0; i < blobs; i++) {
       const r = (1.6 + rand() * 1.4) * scale;
@@ -126,18 +132,20 @@ export function buildWorld(scene) {
       blob.position.set((rand() - 0.5) * 3 * scale, h + (rand() - 0.2) * 1.5 * scale, (rand() - 0.5) * 3 * scale);
       blob.scale.y = 0.65;
       blob.castShadow = true;
-      g.add(blob);
+      crown.add(blob);
       // hanging moss strands
       for (let k = 0; k < 3; k++) {
         const len = (1 + rand() * 2.5) * scale;
-        const moss = new THREE.Mesh(new THREE.PlaneGeometry(0.25 * scale, len), mossMat);
+        // pivot at the top so the strand swings like a pendulum
+        const moss = new THREE.Mesh(new THREE.PlaneGeometry(0.25 * scale, len).translate(0, -len / 2, 0), mossMat);
         moss.position.set(
           blob.position.x + (rand() - 0.5) * r,
-          blob.position.y - r * 0.5 - len / 2,
+          blob.position.y - r * 0.5,
           blob.position.z + (rand() - 0.5) * r
         );
         moss.rotation.y = rand() * Math.PI;
-        g.add(moss);
+        crown.add(moss);
+        mossList.push({ obj: moss, phase: rand() * 6.28, speed: 0.8 + rand() * 0.8 });
       }
     }
     g.position.set(x, 0, z);
@@ -174,6 +182,22 @@ export function buildWorld(scene) {
   const reedGeo = new THREE.ConeGeometry(0.03, 1.4, 4);
   reedGeo.translate(0, 0.7, 0);
   const reedMat = new THREE.MeshStandardMaterial({ color: 0x5b7a35, roughness: 1 });
+  const windUniform = { value: 0 };
+  reedMat.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = windUniform;
+    shader.vertexShader = 'uniform float uTime;\n' + shader.vertexShader.replace(
+      '#include <begin_vertex>',
+      `#include <begin_vertex>
+      #ifdef USE_INSTANCING
+        float ph = instanceMatrix[3].x * 0.35 + instanceMatrix[3].z * 0.27;
+      #else
+        float ph = 0.0;
+      #endif
+      float bend = position.y * position.y * 0.06;
+      transformed.x += sin(uTime * 1.6 + ph) * bend;
+      transformed.z += cos(uTime * 1.2 + ph * 1.3) * bend * 0.6;`
+    );
+  };
   const REEDS = 700;
   const reeds = new THREE.InstancedMesh(reedGeo, reedMat, REEDS);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), s3 = new THREE.Vector3(), p3 = new THREE.Vector3();
@@ -203,16 +227,19 @@ export function buildWorld(scene) {
     pad.position.set(Math.cos(a) * r, -0.23, Math.sin(a) * r);
     pad.rotation.y = rand() * Math.PI * 2;
     scene.add(pad);
+    pads.push({ obj: pad, baseY: pad.position.y, phase: rand() * 6.28, spin: (rand() - 0.5) * 0.1 });
     if (rand() > 0.7) {
       const fl = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.2, 6, 1, true), flowerMat);
       fl.position.set(pad.position.x, -0.12, pad.position.z);
       fl.rotation.x = Math.PI;
       scene.add(fl);
+      pads[pads.length - 1].flower = fl;
     }
   }
 
   // ---- Glowing mushrooms ----
-  const capMat = new THREE.MeshBasicMaterial({ color: 0x55ffe0 });
+  const capMats = [0, 1, 2].map(() => new THREE.MeshBasicMaterial({ color: 0x55ffe0 }));
+  const capBase = new THREE.Color(0x55ffe0);
   const stemMat = new THREE.MeshStandardMaterial({ color: 0xc8d0b0, roughness: 0.8 });
   for (let i = 0; i < 26; i++) {
     const a = rand() * Math.PI * 2;
@@ -221,11 +248,54 @@ export function buildWorld(scene) {
     const h = 0.15 + rand() * 0.2;
     const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, h, 5), stemMat);
     stem.position.y = h / 2;
-    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.1 + rand() * 0.06, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2), capMat);
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.1 + rand() * 0.06, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2), capMats[i % 3]);
     cap.position.y = h;
     g.add(stem, cap);
     g.position.set(Math.cos(a) * r, 0, Math.sin(a) * r);
     scene.add(g);
+  }
+
+  // ---- Drifting ground mist ----
+  const mistCanvas = document.createElement('canvas');
+  mistCanvas.width = mistCanvas.height = 128;
+  const mctx = mistCanvas.getContext('2d');
+  const grad = mctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, 'rgba(170,200,190,0.35)');
+  grad.addColorStop(1, 'rgba(190,220,210,0)');
+  mctx.fillStyle = grad;
+  mctx.fillRect(0, 0, 128, 128);
+  const mistTex = new THREE.CanvasTexture(mistCanvas);
+  const mists = [];
+  for (let i = 0; i < 14; i++) {
+    const m = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ map: mistTex, transparent: true, opacity: 0.1, depthWrite: false })
+    );
+    const size = 8 + rand() * 10;
+    m.scale.set(size, 1, size * 0.7);
+    m.position.set((rand() - 0.5) * 50, 0.15 + rand() * 0.5, (rand() - 0.5) * 50);
+    m.renderOrder = 2;
+    scene.add(m);
+    mists.push({ obj: m, vx: 0.3 + rand() * 0.4, vz: (rand() - 0.5) * 0.3, spin: (rand() - 0.5) * 0.05, phase: rand() * 6.28 });
+  }
+
+  // ---- Water ripples ----
+  const rippleGeo = new THREE.RingGeometry(0.9, 1, 40).rotateX(-Math.PI / 2);
+  const ripples = [];
+  let rippleTimer = 0;
+  function spawnRipple() {
+    let r = ripples.find((x) => !x.alive);
+    if (!r) {
+      if (ripples.length > 24) return;
+      const mesh = new THREE.Mesh(rippleGeo, new THREE.MeshBasicMaterial({ color: 0x9fd8c8, transparent: true, depthWrite: false }));
+      r = { mesh, alive: false };
+      ripples.push(r);
+      scene.add(mesh);
+    }
+    const a = rand() * Math.PI * 2;
+    const d = 27 + rand() * 20;
+    r.mesh.position.set(Math.cos(a) * d, -0.24, Math.sin(a) * d);
+    r.t = 0; r.dur = 2 + rand() * 1.5; r.size = 1 + rand() * 1.5; r.alive = true; r.mesh.visible = true;
   }
 
   // ---- Fireflies ----
@@ -255,6 +325,43 @@ export function buildWorld(scene) {
     }
     ffGeo.attributes.position.needsUpdate = true;
     fireflies.material.opacity = 0.6 + 0.4 * Math.sin(t * 3);
+
+    // wind gusts: a slow wave plus a faster flutter
+    const gust = 0.6 + 0.4 * Math.sin(t * 0.35);
+    windUniform.value = t * gust;
+    for (const c of crowns) {
+      c.obj.rotation.z = Math.sin(t * 0.7 + c.phase) * c.amp * gust;
+      c.obj.rotation.x = Math.cos(t * 0.55 + c.phase) * c.amp * 0.7 * gust;
+    }
+    for (const m of mossList) {
+      m.obj.rotation.x = Math.sin(t * m.speed + m.phase) * 0.18 * gust;
+      m.obj.rotation.z = Math.cos(t * m.speed * 0.8 + m.phase) * 0.1 * gust;
+    }
+    for (const p of pads) {
+      p.obj.position.y = p.baseY + Math.sin(t * 1.1 + p.phase) * 0.025;
+      p.obj.rotation.y += p.spin * dt;
+      if (p.flower) p.flower.position.y = p.obj.position.y + 0.11;
+    }
+    capMats.forEach((m, i) => m.color.copy(capBase).multiplyScalar(0.8 + 0.6 * (0.5 + 0.5 * Math.sin(t * 1.3 + i * 2.1))));
+    for (const m of mists) {
+      m.obj.position.x += m.vx * dt;
+      m.obj.position.z += m.vz * dt;
+      m.obj.rotation.y += m.spin * dt;
+      if (m.obj.position.x > 30) m.obj.position.x = -30;
+      if (Math.abs(m.obj.position.z) > 30) m.vz *= -1;
+      m.obj.material.opacity = 0.07 + 0.04 * Math.sin(t * 0.4 + m.phase);
+    }
+    rippleTimer -= dt;
+    if (rippleTimer <= 0) { spawnRipple(); rippleTimer = 0.25 + rand() * 0.5; }
+    for (const r of ripples) {
+      if (!r.alive) continue;
+      r.t += dt;
+      const k = r.t / r.dur;
+      r.mesh.scale.setScalar(0.1 + k * r.size);
+      r.mesh.material.opacity = 0.35 * (1 - k);
+      if (k >= 1) { r.alive = false; r.mesh.visible = false; }
+    }
+    moonDisc.material.color.setScalar(0.85 + 0.05 * Math.sin(t * 0.2));
   }
 
   return { obstacles, update, moon };

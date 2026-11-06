@@ -18,14 +18,15 @@ Three.js is bundled in `lib/`, so the game works offline. It also works on GitHu
 | Input | Action |
 | --- | --- |
 | `W A S D` | Hop around |
-| Mouse (or `←` `→`) | Look / aim |
-| Left click (or `J`) | Saber slash; hits enemies and deflects bolts |
-| Right click / `Shift` (or `K`) | Block; deflects blaster bolts back at the shooter |
+| Drag on a touchscreen, mouse, or `←` `→` | Look / aim |
+| `J` (or left click) | Saber slash; hits enemies and deflects bolts |
+| `K` / `Shift` (or right click) | Block; deflects blaster bolts back at the shooter |
 | `Space` | Jump; press again in the air for a Force Flip (costs Force) |
 | `F` (or `E`) | Force Push: knocks back enemies and reflects bolts |
 | `Q` | Saber Throw: the saber spins out and comes back |
 | `M` | Mute |
 | `Esc` / `P` | Pause |
+| `Enter` | Start, resume, or retry |
 
 ## Gameplay
 

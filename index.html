@@ -31,10 +31,13 @@
       <div class="track"><div id="boss-fill" class="fill boss"></div></div>
     </div>
     <div id="cooldowns">
+      <div class="cd" id="cd-slash"><kbd>J</kbd> Slash</div>
+      <div class="cd" id="cd-block"><kbd>K</kbd> Block</div>
       <div class="cd" id="cd-push"><kbd>F</kbd> Force Push</div>
       <div class="cd" id="cd-throw"><kbd>Q</kbd> Saber Throw</div>
     </div>
     <div id="crosshair"></div>
+    <div id="touch-hint">Drag to look around</div>
   </div>
 
   <div id="banner"></div>
@@ -57,15 +60,16 @@
       <button data-color="purple" class="swatch" style="--c:#b04dff"></button>
       <button data-color="yellow" class="swatch" style="--c:#ffd02e"></button>
     </div>
-    <button id="start" class="big">IGNITE &amp; PLAY</button>
+    <button id="start" class="big">IGNITE &amp; PLAY <small>Enter</small></button>
     <div class="controls">
       <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Hop around</div>
-      <div><kbd>Mouse</kbd> Look (or <kbd>←</kbd><kbd>→</kbd>)</div>
-      <div><kbd>Left click</kbd> Saber slash (deflects bolts)</div>
-      <div><kbd>Right click</kbd> / <kbd>Shift</kbd> Block &amp; deflect</div>
+      <div><span class="touch-ico" aria-hidden="true"></span> Drag screen to look (or <kbd>←</kbd><kbd>→</kbd>)</div>
+      <div><kbd>J</kbd> Saber slash (or left click)</div>
+      <div><kbd>K</kbd> / <kbd>Shift</kbd> Block &amp; deflect (or right click)</div>
       <div><kbd>Space</kbd> Jump, again for Force Flip</div>
       <div><kbd>F</kbd> Force Push &nbsp; <kbd>Q</kbd> Saber Throw</div>
-      <div><kbd>M</kbd> Mute &nbsp; <kbd>Esc</kbd> Pause</div>
+      <div><kbd>Enter</kbd> Start / resume &nbsp; <kbd>Esc</kbd> Pause</div>
+      <div><kbd>M</kbd> Mute</div>
     </div>
     <p class="tip">Tip: start blocking right before a bolt hits for a PERFECT deflect straight back at the shooter.</p>
   </div>

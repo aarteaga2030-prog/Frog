@@ -11,8 +11,10 @@ import { buildWorld, ARENA_RADIUS } from './world.js';
 // ============================================================
 // Config
 // ============================================================
-const FROG_URL = encodeURI('RainFrog_FreeDownload 2.obj');
-const SABER_URL = 'anakin_skywalkers_lightsaber.glb';
+const ASSET_CFG = window.FROG_JEDI_ASSETS || {};
+const FROG_URL = ASSET_CFG.frog || encodeURI('RainFrog_FreeDownload 2.obj');
+const SABER_URL = ASSET_CFG.saber || 'anakin_skywalkers_lightsaber.glb';
+const SABER_BASE64 = !!ASSET_CFG.saberBase64; // GLB shipped as base64 text
 const FROG_HEIGHT = 0.9;          // meters
 const FROG_YAW = 0;         // rotates the OBJ so its face points along +Z
 const SABER_COLORS = { blue: 0x3b8cff, green: 0x3dff5a, purple: 0xb04dff, yellow: 0xffd02e };
@@ -22,6 +24,7 @@ const BLADE_LEN = 1.05;
 const GRAVITY = -20;
 const MOVE_SPEED = 6.2;
 const MOUSE_SENS = 0.0024;
+const TOUCH_SENS = 0.006;
 
 const UP = new THREE.Vector3(0, 1, 0);
 const tmpV = new THREE.Vector3();
@@ -67,7 +70,7 @@ const ui = {
   hud: $('hud'), hp: $('hp-fill'), force: $('force-fill'), wave: $('wave'), score: $('score'),
   boss: $('boss'), bossFill: $('boss-fill'), banner: $('banner'), popup: $('popup'), flash: $('flash'),
   loading: $('loading'), loadPct: $('load-pct'), menu: $('menu'), pause: $('pause'), gameover: $('gameover'),
-  cdPush: $('cd-push'), cdThrow: $('cd-throw'),
+  cdPush: $('cd-push'), cdThrow: $('cd-throw'), cdSlash: $('cd-slash'), cdBlock: $('cd-block'),
 };
 
 let bannerTimer = 0;
@@ -104,6 +107,17 @@ function loadFrog() {
   });
 }
 function loadSaber() {
+  if (SABER_BASE64) {
+    return fetch(SABER_URL)
+      .then((r) => { if (!r.ok) throw new Error(r.status); return r.text(); })
+      .then((b64) => {
+        const bin = atob(b64.trim());
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        return new Promise((resolve, reject) => new GLTFLoader().parse(bytes.buffer, '', resolve, reject));
+      })
+      .catch((err) => { console.warn('Saber failed to load, using fallback', err); return null; });
+  }
   return new Promise((resolve) => {
     new GLTFLoader(manager).load(SABER_URL, resolve, undefined,
       (err) => { console.warn('Saber failed to load, using fallback', err); resolve(null); });
@@ -238,7 +252,11 @@ function makeSaber(hiltTemplate, colorHex) {
       const e = Math.max(0.001, saber.extend);
       blade.scale.set(1, e, 1);
       blade.visible = saber.extend > 0.01;
-      light.intensity = 2.2 * saber.extend;
+      // a real blade never sits still: subtle hum flicker
+      const fl = 0.94 + 0.04 * Math.sin(performance.now() * 0.06) + Math.random() * 0.04;
+      light.intensity = 2.2 * saber.extend * fl;
+      glowMat.opacity = 0.5 * fl + 0.05;
+      glow.scale.set(fl, 1, fl);
     },
     // world-space base and tip of the blade
     getSegment(base, tip) {
@@ -389,14 +407,74 @@ function updateFlashes(dt) {
     const f = flashes[i];
     f.t += dt;
     const k = f.t / f.dur;
-    f.mesh.scale.setScalar(0.1 + easeOut(Math.min(1, k)) * f.size);
-    f.mesh.material.opacity = 0.8 * (1 - k);
+    if (f.beam) {
+      const w = f.radius * (1 - k) * (1 + 0.15 * Math.sin(f.t * 40));
+      f.mesh.scale.set(w, 1, w);
+      f.mesh.material.opacity = 0.5 * (1 - k);
+    } else {
+      f.mesh.scale.setScalar(0.1 + easeOut(Math.min(1, k)) * f.size);
+      f.mesh.material.opacity = 0.8 * (1 - k);
+    }
     if (k >= 1) {
       scene.remove(f.mesh);
-      f.mesh.geometry.dispose();
+      if (f.ownGeo !== false) f.mesh.geometry.dispose();
       f.mesh.material.dispose();
       flashes.splice(i, 1);
     }
+  }
+}
+
+// Vertical teleport beam shown where an enemy drops in
+const beamGeo = new THREE.CylinderGeometry(1, 1, 14, 20, 1, true).translate(0, 7, 0);
+function spawnBeam(pos, colorHex, radius) {
+  const mat = new THREE.MeshBasicMaterial({
+    color: new THREE.Color(colorHex).multiplyScalar(1.5), transparent: true, opacity: 0.5,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  });
+  const mesh = new THREE.Mesh(beamGeo, mat);
+  mesh.position.copy(pos);
+  mesh.scale.set(radius, 1, radius);
+  scene.add(mesh);
+  flashes.push({ mesh, t: 0, dur: 1.2, beam: true, radius, ownGeo: false });
+  spawnFlash(pos.clone().setY(0.05), colorHex, radius * 2.5, 1.0, true);
+}
+
+// Broken enemy parts that tumble, bounce and sink away
+const debris = [];
+function spawnDebris(e) {
+  e.group.updateMatrixWorld(true);
+  let n = 0;
+  e.group.traverse((o) => {
+    if (!o.isMesh || n > 10 || !o.material || o.material.transparent) return;
+    n++;
+    const piece = new THREE.Mesh(o.geometry, o.material);
+    o.matrixWorld.decompose(piece.position, piece.quaternion, piece.scale);
+    piece.castShadow = true;
+    scene.add(piece);
+    debris.push({
+      mesh: piece, t: 0,
+      vel: new THREE.Vector3((Math.random() - 0.5) * 7, 3 + Math.random() * 5, (Math.random() - 0.5) * 7),
+      spin: new THREE.Vector3(Math.random() * 12 - 6, Math.random() * 12 - 6, Math.random() * 12 - 6),
+    });
+  });
+}
+function updateDebris(dt) {
+  for (let i = debris.length - 1; i >= 0; i--) {
+    const d = debris[i];
+    d.t += dt;
+    d.vel.y += GRAVITY * dt;
+    d.mesh.position.addScaledVector(d.vel, dt);
+    d.mesh.rotation.x += d.spin.x * dt;
+    d.mesh.rotation.y += d.spin.y * dt;
+    d.mesh.rotation.z += d.spin.z * dt;
+    if (d.mesh.position.y < 0.05 && d.t < 1.8) {
+      d.mesh.position.y = 0.05;
+      d.vel.y = Math.abs(d.vel.y) * 0.35;
+      d.vel.x *= 0.6; d.vel.z *= 0.6;
+      d.spin.multiplyScalar(0.6);
+    }
+    if (d.t > 1.8) d.mesh.position.y -= dt * 0.4; // sink into the mud
+    if (d.t > 2.6) { scene.remove(d.mesh); debris.splice(i, 1); }
   }
 }
 
@@ -544,6 +622,7 @@ function makeDroneMesh() {
   const body = new THREE.Mesh(new THREE.SphereGeometry(0.34, 20, 14), droneBodyMat);
   body.castShadow = true;
   g.add(body);
+  const fins = [], ants = [];
   const band = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.05, 8, 24), droneDarkMat);
   band.rotation.x = Math.PI / 2;
   g.add(band);
@@ -560,12 +639,15 @@ function makeDroneMesh() {
     fin.position.set(s * 0.45, 0, -0.05);
     fin.rotation.z = s * 0.3;
     g.add(fin);
-    const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.3), droneDarkMat);
-    ant.position.set(s * 0.12, 0.42, -0.05);
+    fins.push(fin);
+    const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.3).translate(0, 0.15, 0), droneDarkMat);
+    ant.position.set(s * 0.12, 0.28, -0.05);
     ant.rotation.z = -s * 0.3;
     g.add(ant);
+    ants.push(ant);
   }
-  return { g, eyeMat };
+  g.rotation.order = 'YXZ';
+  return { g, eyeMat, band, fins, ants, eye };
 }
 
 function makeBuzzerMesh() {
@@ -590,6 +672,7 @@ function makeBuzzerMesh() {
   stinger.rotation.x = Math.PI / 2;
   stinger.position.z = 0.38;
   g.add(stinger);
+  g.rotation.order = 'YXZ';
   return { g, eyeMat, rotor };
 }
 
@@ -604,7 +687,7 @@ class Enemy {
     this.spawnT = 0;
     if (type === 'drone') {
       const m = makeDroneMesh();
-      this.group = m.g; this.eyeMat = m.eyeMat;
+      this.group = m.g; this.eyeMat = m.eyeMat; this.parts = m;
       this.group.scale.setScalar(1.5);
       this.hp = 2; this.radius = 0.6; this.hover = 1.3 + Math.random() * 0.6;
       this.shootCd = 1.5 + Math.random() * 2;
@@ -652,6 +735,7 @@ function spawnEnemy(type) {
   const a = Math.random() * Math.PI * 2;
   const r = ARENA_RADIUS - 2;
   const e = new Enemy(type, Math.cos(a) * r, Math.sin(a) * r);
+  spawnBeam(new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r), type === 'boss' ? ENEMY_RED : 0xff7744, type === 'boss' ? 1.6 : 0.6);
   enemies.push(e);
   return e;
 }
@@ -675,6 +759,7 @@ function killEnemy(e) {
   spawnSparks(c, 0xffaa44, e.type === 'boss' ? 60 : 26, 8);
   sfx.explode();
   shake = Math.max(shake, e.type === 'boss' ? 0.6 : 0.2);
+  spawnDebris(e);
   scene.remove(e.group);
   if (e.type === 'boss') {
     popup('SITH TOAD DEFEATED!');
@@ -717,6 +802,7 @@ function updateEnemies(dt) {
       e.vel.lerp(desired, Math.min(1, dt * 2));
       e.pos.y = e.hover + Math.sin(e.t * 2) * 0.15;
       faceTowards(e.group, ppos, dt, 8);
+      animateDrone(e, dt);
 
       e.shootCd -= dt;
       const charge = THREE.MathUtils.clamp(1 - e.shootCd / 0.5, 0, 1);
@@ -731,10 +817,15 @@ function updateEnemies(dt) {
         target.z += (Math.random() - 0.5) * 0.6;
         fireBolt(muzzle, target.sub(muzzle), 15 + wave * 0.4, 'enemy', e, ENEMY_RED, 10);
         sfx.blaster();
+        spawnFlash(muzzle, ENEMY_RED, 0.45, 0.12);
+        e.recoil = 1;
+        e.knock.addScaledVector(dirP, -1.2);
       }
     } else if (e.type === 'buzzer') {
       e.attackCd -= dt;
       e.rotor.rotation.y += dt * 40;
+      e.group.rotation.z = Math.sin(e.t * 18) * 0.12;
+      e.group.rotation.x = e.attackCd <= 0 ? 0.35 : Math.sin(e.t * 4) * 0.1;
       let desired;
       if (e.attackCd <= 0) {
         desired = dirP.clone().multiplyScalar(7.5);
@@ -789,6 +880,11 @@ function updateBoss(e, dt, dist, dirP) {
   e.vy += GRAVITY * dt;
   e.y += e.vy * dt;
   if (e.y <= 0) { e.y = 0; e.vy = 0; }
+  if (e.y <= 0 && e.wasAir) e.squash = 1;
+  e.wasAir = e.y > 0;
+  e.squash = Math.max(0, (e.squash || 0) - dt * 4);
+  const br = Math.sin(e.t * 2) * 0.025;
+  e.body.scale.set(1.6 * (1 + br + e.squash * 0.12), 1.6 * (1 + br * 0.5 - e.squash * 0.18), 1.6 * (1 + br + e.squash * 0.12));
   e.pos.y = e.y;
   ui.bossFill.style.width = Math.max(0, (e.hp / e.maxHp) * 100) + '%';
 
@@ -879,6 +975,21 @@ function updateBoss(e, dt, dist, dirP) {
     }
   }
   if (e.state !== 'stunned') e.body.rotation.z = 0;
+}
+
+function animateDrone(e, dt) {
+  const p = e.parts;
+  p.band.rotation.z += dt * 2.5;
+  p.fins.forEach((f, i) => { const s = i ? 1 : -1; f.rotation.z = s * (0.3 + Math.sin(e.t * 14 + i) * 0.25); });
+  p.ants.forEach((a, i) => { const s = i ? 1 : -1; a.rotation.x = Math.sin(e.t * 6 + i * 1.7) * 0.25; a.rotation.z = -s * 0.3 + Math.cos(e.t * 5 + i) * 0.1; });
+  // bank into the strafe, pitch on recoil
+  const yaw = e.group.rotation.y;
+  const side = e.vel.x * Math.cos(yaw) - e.vel.z * Math.sin(yaw);
+  const fwd = e.vel.x * Math.sin(yaw) + e.vel.z * Math.cos(yaw);
+  e.recoil = Math.max(0, (e.recoil || 0) - dt * 5);
+  e.group.rotation.z = THREE.MathUtils.damp(e.group.rotation.z, side * 0.12, 5, dt);
+  e.group.rotation.x = THREE.MathUtils.damp(e.group.rotation.x, fwd * 0.08, 5, dt) - e.recoil * 0.25;
+  p.eye.scale.setScalar(1 + Math.sin(e.t * 9) * 0.08 + (e.recoil * 0.5));
 }
 
 function faceTowards(obj, target, dt, rate) {
@@ -1022,20 +1133,51 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyQ') tryThrow();
     if (e.code === 'KeyJ') trySwing();
     if (e.code === 'Escape' || e.code === 'KeyP') pauseGame();
-  } else if (state === 'paused' && (e.code === 'KeyP')) {
+  } else if (state === 'paused' && (e.code === 'KeyP' || e.code === 'Enter')) {
     resumeGame();
+  } else if (e.code === 'Enter' && (state === 'menu' || (state === 'dead' && !ui.gameover.classList.contains('hidden')))) {
+    e.preventDefault();
+    startGame();
   }
   if (e.code === 'KeyM') sfx.setMuted(!sfx.muted);
 });
 window.addEventListener('keyup', (e) => keys.delete(e.code));
 window.addEventListener('blur', () => { keys.clear(); mouseL = mouseR = false; });
 
-canvas.addEventListener('mousedown', (e) => {
-  if (state !== 'playing') return;
-  if (!pointerLocked) lockPointer();
-  if (e.button === 0) { mouseL = true; trySwing(); }
-  if (e.button === 2) mouseR = true;
+// Mouse: click to attack/block (and capture the pointer for mouse-look).
+// Touch / pen: drag anywhere on the screen to look around.
+let lookPointer = null, lastLX = 0, lastLY = 0;
+canvas.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'mouse') {
+    if (state !== 'playing') return;
+    if (!pointerLocked) lockPointer();
+    if (e.button === 0) { mouseL = true; trySwing(); }
+    if (e.button === 2) mouseR = true;
+    return;
+  }
+  e.preventDefault();
+  if (lookPointer !== null) return;
+  lookPointer = e.pointerId;
+  lastLX = e.clientX; lastLY = e.clientY;
+  try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+  document.body.classList.add('touching');
 });
+canvas.addEventListener('pointermove', (e) => {
+  if (e.pointerId !== lookPointer) return;
+  const dx = e.clientX - lastLX, dy = e.clientY - lastLY;
+  lastLX = e.clientX; lastLY = e.clientY;
+  if (state === 'playing') {
+    camYaw -= dx * TOUCH_SENS;
+    camPitch = THREE.MathUtils.clamp(camPitch + dy * TOUCH_SENS, -0.25, 1.1);
+  }
+});
+function endLook(e) {
+  if (e.pointerId !== lookPointer) return;
+  lookPointer = null;
+  document.body.classList.remove('touching');
+}
+canvas.addEventListener('pointerup', endLook);
+canvas.addEventListener('pointercancel', endLook);
 window.addEventListener('mouseup', (e) => {
   if (e.button === 0) mouseL = false;
   if (e.button === 2) mouseR = false;
@@ -1227,7 +1369,15 @@ function updatePlayer(dt) {
   player.squash = Math.max(0, player.squash - dt * 5);
   const sq = player.squash * 0.25 + (player.onGround ? 0 : -0.08);
   player.model.position.y = hop;
-  player.model.scale.set(1 + sq * 0.5, 1 - sq, 1 + sq * 0.5);
+  const br = moving ? 0 : Math.sin(clock.elapsedTime * 2.4) * 0.022; // breathing
+  player.model.scale.set(1 + sq * 0.5 + br, 1 - sq + br * 0.5, 1 + sq * 0.5 + br);
+  // little dust puff each time the feet touch down
+  const hopIdx = Math.floor(player.hopPhase / Math.PI);
+  if (moving && hopIdx !== player.lastHopIdx) {
+    player.lastHopIdx = hopIdx;
+    spawnFlash(player.pos.clone().setY(0.03), 0x5a6a44, 0.5, 0.3, true);
+  }
+  if (!moving) player.lastHopIdx = -1;
   // Force flip
   if (player.flip > 0) {
     player.flip = Math.min(1, player.flip + dt * 2.6);
@@ -1373,6 +1523,8 @@ function updateBolts(dt) {
     if (b.dead) continue;
     b.life -= dt;
     b.pos.addScaledVector(b.vel, dt);
+    const pulse = (b.big ? 2.2 : 1) * (1 + 0.25 * Math.sin(b.life * 50));
+    b.mesh.scale.x = b.mesh.scale.z = pulse;
     if (b.life <= 0 || b.pos.y < -0.2 || Math.hypot(b.pos.x, b.pos.z) > 45) { killBolt(b); continue; }
 
     // trees block bolts
@@ -1449,7 +1601,17 @@ function updateCamera(dt) {
 function updateHUD() {
   ui.hp.style.width = player.hp + '%';
   ui.force.style.width = player.force + '%';
-  ui.score.textContent = score;
+  if (ui.score.textContent !== String(score)) {
+    ui.score.textContent = score;
+    ui.score.classList.remove('bump');
+    void ui.score.offsetWidth;
+    ui.score.classList.add('bump');
+  }
+  ui.hud.classList.toggle('low', player.hp < 30);
+  ui.cdSlash.classList.toggle('active', !!player.swing);
+  ui.cdBlock.classList.toggle('active', player.blocking);
+  ui.cdPush.style.setProperty('--p', Math.round((1 - player.pushCd) * Math.min(1, player.force / 30) * 100) + '%');
+  ui.cdThrow.style.setProperty('--p', player.throw ? '0%' : Math.round(Math.min(1, player.force / 35) * 100) + '%');
   ui.cdPush.classList.toggle('off', player.pushCd > 0 || player.force < 30);
   ui.cdThrow.classList.toggle('off', !!player.throw || player.force < 35);
 }
@@ -1488,6 +1650,8 @@ function loop() {
   } else if (state === 'menu' || state === 'loading') {
     // slow orbit around the frog on the menu
     menuSpin += dt * 0.25;
+    const mb = Math.sin(t * 2.4) * 0.022;
+    player.model.scale.set(1 + mb, 1 + mb * 0.5, 1 + mb);
     if (player.saber) {
       player.saber.update(dt);
       const fakeSway = Math.sin(t * 1.5) * 0.05;
@@ -1501,6 +1665,7 @@ function loop() {
 
   updateSparks(dt);
   updateFlashes(dt);
+  updateDebris(dt);
 
   if (bannerTimer > 0) {
     bannerTimer -= dt;
