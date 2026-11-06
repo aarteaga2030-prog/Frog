@@ -1332,7 +1332,7 @@ function updatePlayer(dt) {
 
   // --- Movement ---
   const fwd = player.forward(new THREE.Vector3());
-  const right = new THREE.Vector3(-fwd.z, 0, fwd.x).negate(); // camera right
+  const right = new THREE.Vector3(-fwd.z, 0, fwd.x); // screen right when facing fwd
   const input = new THREE.Vector3();
   if (alive) {
     if (keys.has('KeyW')) input.add(fwd);
